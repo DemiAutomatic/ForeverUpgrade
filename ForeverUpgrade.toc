@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: Forever Upgrade
+## Notes: Shows whether gear is an upgrade for your class, spec, and stat weights.
+## Author: austi
+## Version: 1.0.0
+## SavedVariables: ForeverUpgradeDB
+## SavedVariablesPerCharacter: ForeverUpgradeCharDB
+## IconTexture: Interface\Icons\INV_Misc_Gem_01
+## Category: Equipment
+## AddonCompartmentFunc: ForeverUpgrade_OnCompartmentClick
+
+Core.lua
+Scales.lua
+Spec.lua
+Items.lua
+Tooltip.lua
+Options.lua
