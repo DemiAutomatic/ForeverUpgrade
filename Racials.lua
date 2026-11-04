@@ -46,9 +46,26 @@ local HUNTER = {
 -- hit cap falls by 3%. Melee dodge falls from 6.5% to 6%. Ranged is not dodged.
 -- Glancing stays 40% of white swings, and those swings go from 65% damage to 85%.
 -- Skill above the level cap does not add crit against a higher-level mob.
+-- The connect percents are priced with the level-60 hit weight, then multiplied
+-- by level/60. That weight is 1% of a level-60 character's damage, so a level-8
+-- sword must not collect the full price. Glancing is already 8% of this weapon.
 local MELEE_CONNECT = 3.5
 local RANGED_HIT = 3
 local GLANCE = 0.08
+
+local function LevelScale()
+    local level = ns.PlayerLevel and ns.PlayerLevel()
+    if type(level) ~= "number" then
+        return 1
+    end
+    if level >= 60 then
+        return 1
+    end
+    if level < 1 then
+        return 0
+    end
+    return level / 60
+end
 
 local function InterfaceVersion()
     if type(GetBuildInfo) ~= "function" then
@@ -120,12 +137,13 @@ function ns.WeaponSkillValue(weights, kind, dps, amount)
         return 0
     end
     local weaponDps = type(dps) == "number" and dps or 0
+    local scale = LevelScale()
     local perFive = 0
     if kind == "ranged" then
         if class ~= "HUNTER" or not HUNTER[spec] then
             return 0
         end
-        perFive = RANGED_HIT * WeightOf(weights, "hit")
+        perFive = RANGED_HIT * WeightOf(weights, "hit") * scale
     elseif kind == "mh" or kind == "2h" or kind == "oh" then
         local melee = MELEE[class]
         if not melee or not melee[spec] then
@@ -141,7 +159,7 @@ function ns.WeaponSkillValue(weights, kind, dps, amount)
         if kind == "oh" then
             perFive = weaponDps * dpsWeight * (MELEE_CONNECT / 100 + GLANCE)
         else
-            perFive = MELEE_CONNECT * WeightOf(weights, "hit")
+            perFive = MELEE_CONNECT * WeightOf(weights, "hit") * scale
             if class ~= "DRUID" then
                 perFive = perFive + weaponDps * dpsWeight * GLANCE
             end

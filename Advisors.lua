@@ -851,6 +851,66 @@ local function BestKey(best)
     return table.concat(bits, ";")
 end
 
+-- True when the bag arrow should show. Nil is not used: a pending item
+-- stays false until the next advisor pass, which asks Baganator to redraw.
+local function BagUpgrade(itemLink)
+    if not ns.ready or not ns.char or ns.char.enabled == false or ns.char.bagAdvisor == false then
+        return false
+    end
+    if type(itemLink) ~= "string" or ns.Secret(itemLink) then
+        return false
+    end
+    local result = ns.Evaluate(itemLink)
+    if not result or result.verdict == "pending" then
+        return false
+    end
+    return result.verdict == "upgrade"
+end
+
+local function RefreshBaganator()
+    if type(Baganator) ~= "table" or type(Baganator.API) ~= "table" or type(Baganator.API.RequestItemButtonsRefresh) ~= "function" then
+        return
+    end
+    local reason = Baganator.Constants and Baganator.Constants.RefreshReason
+    if type(reason) == "table" then
+        Baganator.API.RequestItemButtonsRefresh({ reason.ItemWidgets, reason.Searches })
+    else
+        Baganator.API.RequestItemButtonsRefresh()
+    end
+end
+
+-- Baganator owns the button layout, so the arrow is one of its corner icons.
+-- Top-left and first in line, ahead of the junk coin, which is the same
+-- overlap the Bagnon buttons needed a child frame to cover.
+local function RegisterBaganator()
+    if ns._fuBaganator or type(Baganator) ~= "table" or type(Baganator.API) ~= "table" then
+        return
+    end
+    if type(Baganator.API.RegisterCornerWidget) ~= "function" then
+        return
+    end
+    ns._fuBaganator = true
+    local ok, err = pcall(function()
+        Baganator.API.RegisterCornerWidget("Forever Upgrade", "forever_upgrade", function(_, details)
+            return BagUpgrade(details and details.itemLink)
+        end, function(itemButton)
+            local arrow = itemButton:CreateTexture(nil, "OVERLAY")
+            arrow:SetTexture("Interface\\AddOns\\ForeverUpgrade\\Media\\UpgradeArrow")
+            arrow:SetSize(16, 16)
+            return arrow
+        end, { corner = "top_left", priority = 1 })
+        if type(Baganator.API.RegisterUpgradePlugin) == "function" then
+            Baganator.API.RegisterUpgradePlugin("Forever Upgrade", "forever_upgrade", function(itemLink)
+                return BagUpgrade(itemLink)
+            end)
+        end
+    end)
+    if not ok and not ns.baganatorReported then
+        ns.baganatorReported = true
+        ns.Print("Baganator: " .. tostring(err))
+    end
+end
+
 local function DoRefresh()
     if not ns.ready or not ns.char or ns.char.enabled == false then
         HideMarked()
@@ -862,6 +922,7 @@ local function DoRefresh()
                 ns.RefreshTooltip()
             end
         end
+        RefreshBaganator()
         return
     end
     local before = BestKey(ns.bagBest)
@@ -901,6 +962,7 @@ local function DoRefresh()
             ns.RefreshTooltip()
         end
     end
+    RefreshBaganator()
 end
 
 local HookFrames
@@ -1000,6 +1062,7 @@ local function HookQuestLog()
 end
 
 HookFrames = function()
+    RegisterBaganator()
     HookQuestLog()
     HookFrame(ContainerFrameCombinedBags)
     HookFrame(LootFrame)
@@ -1023,3 +1086,5 @@ ns.On("PLAYER_ENTERING_WORLD", function()
     HookFrames()
     ns.RefreshAdvisors()
 end)
+
+RegisterBaganator()
