@@ -37,6 +37,12 @@ function ns.RefreshOptions()
     local weights = ns.MergedWeights(class, info.spec)
     frame.status:SetText(info.summary or "")
     frame.custom:SetChecked(info.custom and true or false)
+    if frame.toggles then
+        for i = 1, #frame.toggles do
+            local check = frame.toggles[i]
+            check:SetChecked(ns.char and ns.char[check.key] ~= false)
+        end
+    end
 
     if frame.specButtons then
         for i = 1, #frame.specButtons do
@@ -91,7 +97,7 @@ function ns.BuildOptions()
     end
     local frame = CreateFrame("Frame", "ForeverUpgradeFrame", UIParent, "BackdropTemplate")
     ns.frame = frame
-    frame:SetSize(540, 580)
+    frame:SetSize(540, 640)
     frame:SetFrameStrata("HIGH")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -180,7 +186,7 @@ function ns.BuildOptions()
 
     local scroll = CreateFrame("ScrollFrame", "ForeverUpgradeScroll", frame, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 24, -158)
-    scroll:SetPoint("BOTTOMRIGHT", -36, 92)
+    scroll:SetPoint("BOTTOMRIGHT", -36, 126)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         if ns.Secret(delta) or type(delta) ~= "number" then
@@ -244,14 +250,41 @@ function ns.BuildOptions()
     end
     content:SetHeight(math.abs(y) + 8)
 
+    local toggleInfo = {
+        { key = "bagAdvisor", label = "Bags", name = "ForeverUpgradeBagCheck", x = 12 },
+        { key = "lootAdvisor", label = "Loot", name = "ForeverUpgradeLootCheck", x = 118 },
+        { key = "questAdvisor", label = "Quests", name = "ForeverUpgradeQuestCheck", x = 214 },
+        { key = "otherSpecs", label = "Other specs", name = "ForeverUpgradeSpecsCheck", x = 330 },
+    }
+    frame.toggles = {}
+    for i = 1, #toggleInfo do
+        local info = toggleInfo[i]
+        local check = CreateFrame("CheckButton", info.name, frame, "UICheckButtonTemplate")
+        check:SetPoint("BOTTOMLEFT", info.x, 84)
+        check.key = info.key
+        local text = check.Text or _G[info.name .. "Text"]
+        if text then
+            text:SetFontObject(GameFontHighlightSmall)
+            text:SetText(info.label)
+        end
+        check:SetScript("OnClick", function(self)
+            if not ns.char then
+                return
+            end
+            ns.char[self.key] = self:GetChecked() and true or false
+            ns.Changed()
+        end)
+        frame.toggles[#frame.toggles + 1] = check
+    end
+
     local help = frame:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-    help:SetPoint("BOTTOMLEFT", 20, 42)
-    help:SetPoint("BOTTOMRIGHT", -20, 42)
+    help:SetPoint("BOTTOMLEFT", 20, 48)
+    help:SetPoint("BOTTOMRIGHT", -20, 48)
     help:SetJustifyH("LEFT")
     help:SetJustifyV("TOP")
     help:SetWordWrap(true)
-    help:SetHeight(46)
-    help:SetText("Starter level-60 weights, not a sim. Hit is priced as if you are under the cap. Weapon speed is points per second above 2.0. Hold Shift on a tooltip for the breakdown. Procs and set bonuses are not scored.")
+    help:SetHeight(32)
+    help:SetText("Starter weights for Classic Era and Forever. Forever counts 10 hit, 14 crit, 12 dodge, or 15 parry as 1%. Era gear is already in percent. Hold Shift for the breakdown.")
 
     local reset = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     reset:SetSize(140, 22)

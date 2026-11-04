@@ -1,4 +1,4 @@
-## Interface: 16001
+## Interface: 16001, 11509
 ## Title: Forever Upgrade
 ## Notes: Shows whether gear is an upgrade for your class, spec, and stat weights.
 ## Author: austi
@@ -12,6 +12,8 @@
 Core.lua
 Scales.lua
 Spec.lua
+Racials.lua
 Items.lua
 Tooltip.lua
+Advisors.lua
 Options.lua

@@ -52,11 +52,17 @@ end
 
 function ns.Changed()
     ns.cacheGen = (ns.cacheGen or 0) + 1
+    if ns.InvalidateScores then
+        ns.InvalidateScores()
+    end
     if ns.RefreshOptions then
         ns.RefreshOptions()
     end
     if ns.RefreshTooltip then
         ns.RefreshTooltip()
+    end
+    if ns.RefreshAdvisors then
+        ns.RefreshAdvisors()
     end
 end
 
@@ -81,6 +87,18 @@ function ns.InitDB()
     end
     if type(char.margin) ~= "number" then
         char.margin = 0.5
+    end
+    if char.bagAdvisor == nil then
+        char.bagAdvisor = true
+    end
+    if char.lootAdvisor == nil then
+        char.lootAdvisor = true
+    end
+    if char.questAdvisor == nil then
+        char.questAdvisor = true
+    end
+    if char.otherSpecs == nil then
+        char.otherSpecs = true
     end
     if type(char.window) ~= "table" then
         char.window = {}
@@ -135,6 +153,7 @@ local function SlashHelp()
     ns.Print("/fu  opens weights.  /fu spec fury  or  /fu auto")
     ns.Print("/fu weight hit 16   /fu import str=1,hit=16   /fu export")
     ns.Print("/fu reset   /fu margin 0.5   /fu on   /fu off   /fu list   /fu debug")
+    ns.Print("/fu pin compares the hovered item with the next one.  /fu pin clear")
 end
 
 function ns.Slash(msg)
@@ -257,6 +276,24 @@ function ns.Slash(msg)
         end
         ns.SetWeight(key, number)
         ns.Print(key .. " set to " .. ns.FormatNum(number) .. " for this spec.")
+        return
+    end
+    if cmd == "pin" then
+        if rest == "clear" or rest == "none" or rest == "off" then
+            ns.char.pin = nil
+            ns.Changed()
+            ns.Print("Pinned item cleared.")
+            return
+        end
+        local link = ns.HoveredLink and ns.HoveredLink()
+        if type(link) ~= "string" then
+            ns.Print("Hover an item, then /fu pin. /fu pin clear removes it.")
+            return
+        end
+        ns.char.pin = link
+        ns.Changed()
+        local name = link:match("%[(.-)%]") or "that item"
+        ns.Print("Pinned " .. name .. ". Hover another item of the same slot to compare.")
         return
     end
     if cmd == "debug" then

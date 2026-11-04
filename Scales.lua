@@ -1,11 +1,24 @@
 local _, ns = ...
 
--- Starter level-60 weights. Primary stat is about 1. Hit and crit are per 1%.
+-- Starter level-60 weights. One point of the main stat is about 1.
+-- Hit and crit weights are per 1%. Classic Era gear says 1%. Forever's
+-- launch client says 10 hit or 14 crit for that same 1%, and parsing
+-- converts those points before the weight is applied.
 -- Weapon DPS is per point of DPS. Weapon speed is per second above 2.0,
 -- so a negative off-hand speed weight favors a fast off-hand.
--- Numbers follow published Forever gear tables where those tables exist.
--- Speed, a few armor values, feral weapon DPS, and the warlock / holy priest /
--- restoration shaman profiles are local starters. Replace any of them in game.
+-- Agility is priced from the crit and dodge weights already in that row.
+-- At 60, 20 agility is 1% crit for a warrior, paladin, shaman or druid,
+-- and 53 agility is 1% for a hunter. Hunters also get 2 ranged AP per agility.
+-- Checked against The Forever Era class tables (October 2026), Warcraft
+-- Tavern's Forever stat guide, Wowhead's phase-1 cat weights, and ForeverDB's
+-- level-30 arms sim. The 15 October 2026 beta notes change three rows.
+-- Arcane intellect is 0.85 because Arcane Blast grants 15% of intellect as
+-- spell damage per stack, and Arcane Wrath adds spell power equal to 5% of
+-- maximum mana. Flat mana keeps its own weight, because it does not get the
+-- Arcane Blast conversion. Retribution intellect is 0.10 after Champion of
+-- the Light was cut in half. Protection paladin spell power and holy damage
+-- are 0.25 after Consecration's coefficient dropped. These rows are not a
+-- full simulation.
 
 ns.TREE_ORDER = {
     WARRIOR = { "arms", "fury", "protection" },
@@ -116,16 +129,16 @@ ns.WEIGHTS = {
     WARRIOR = {
         arms = {
             hit = 14, crit = 12, dps2h = 6.5, speed2h = 8,
-            dpsMH = 3, dpsOH = 1.2, str = 1, agi = 0.55, ap = 0.5,
+            dpsMH = 3, dpsOH = 1.2, str = 1, agi = 0.6, ap = 0.5,
             sta = 0.35, hp5 = 0.1, armor = 0.004,
         },
         fury = {
             hit = 16, crit = 14, dps2h = 6.5, dpsMH = 4, dpsOH = 2.2,
-            speedMH = 3, speedOH = -3, str = 1, agi = 0.6, ap = 0.5, sta = 0.35,
+            speedMH = 3, speedOH = -3, str = 1, agi = 0.7, ap = 0.5, sta = 0.35,
         },
         protection = {
             dodge = 12, parry = 10, hit = 6, block = 5, crit = 4,
-            dpsMH = 2, dps2h = 1.5, def = 1.3, sta = 1, agi = 0.55,
+            dpsMH = 2, dps2h = 1.5, def = 1.3, sta = 1, agi = 0.8,
             str = 0.45, blockValue = 0.4, hp5 = 0.3, ap = 0.25, armor = 0.008,
         },
     },
@@ -137,28 +150,28 @@ ns.WEIGHTS = {
         protection = {
             dodge = 12, parry = 10, block = 6, hit = 4, crit = 3,
             dpsMH = 1.5, def = 1.2, sta = 1, mp5 = 0.8, blockValue = 0.5,
-            agi = 0.5, str = 0.4, sp = 0.35, holyDmg = 0.35, int = 0.3,
+            agi = 0.75, str = 0.4, sp = 0.25, holyDmg = 0.25, int = 0.3,
             ap = 0.2, armor = 0.008,
         },
         retribution = {
             hit = 14, crit = 12, dps2h = 6, speed2h = 10, dpsMH = 2,
-            str = 1, ap = 0.5, agi = 0.4, sta = 0.3, sp = 0.25,
-            holyDmg = 0.25, int = 0.15,
+            str = 1, ap = 0.5, agi = 0.6, sta = 0.3, sp = 0.25,
+            holyDmg = 0.25, int = 0.1,
         },
     },
     HUNTER = {
         beastmastery = {
-            hit = 14, crit = 12, dpsRanged = 7, speedRanged = 5, agi = 1,
+            hit = 14, crit = 12, dpsRanged = 7, speedRanged = 5, agi = 1.25,
             mp5 = 0.6, rap = 0.5, ap = 0.5, dps2h = 0.5, int = 0.3,
             sta = 0.3, dpsMH = 0.3, dpsOH = 0.2, spi = 0.1, str = 0.1,
         },
         marksmanship = {
-            hit = 14, crit = 13, dpsRanged = 7.5, speedRanged = 6, agi = 1,
+            hit = 14, crit = 13, dpsRanged = 7.5, speedRanged = 6, agi = 1.25,
             mp5 = 0.6, rap = 0.5, ap = 0.5, dps2h = 0.5, int = 0.3,
             dpsMH = 0.3, sta = 0.25, dpsOH = 0.2, spi = 0.1, str = 0.1,
         },
         survival = {
-            hit = 14, crit = 12, dpsRanged = 7, speedRanged = 4, agi = 1.05,
+            hit = 14, crit = 12, dpsRanged = 7, speedRanged = 4, agi = 1.25,
             mp5 = 0.6, dps2h = 0.6, rap = 0.5, ap = 0.5, dpsMH = 0.35,
             int = 0.3, sta = 0.3, dpsOH = 0.2, str = 0.15, spi = 0.1,
         },
@@ -183,7 +196,7 @@ ns.WEIGHTS = {
             holyDmg = 0.4, int = 0.6, spi = 0.55, sta = 0.25,
         },
         holy = {
-            crit = 7, mp5 = 2.5, dpsRanged = 1.5, heal = 1, sp = 0.85,
+            crit = 7, mp5 = 3, dpsRanged = 1.5, heal = 1, sp = 1,
             holyDmg = 0.35, int = 0.5, spi = 0.65, sta = 0.2,
         },
         shadow = {
@@ -197,19 +210,20 @@ ns.WEIGHTS = {
             sta = 0.25, spi = 0.1, hit = 12, crit = 10, armor = 0.002, dpsMH = 0.4,
         },
         enhancement = {
-            str = 1, agi = 0.6, ap = 0.5, hit = 14, crit = 13, int = 0.2,
-            sp = 0.3, nature = 0.25, sta = 0.3, mp5 = 0.4, dps2h = 6,
+            str = 1, agi = 0.8, ap = 0.5, hit = 14, crit = 14, int = 0.25,
+            sp = 0.2, nature = 0.15, sta = 0.35, dps2h = 6.5, dpsMH = 4,
             speed2h = 10, armor = 0.003,
         },
         restoration = {
-            heal = 1, sp = 0.65, mp5 = 2.2, int = 0.45, spi = 0.5,
+            heal = 1, sp = 1, mp5 = 3, int = 0.5, spi = 0.3,
             crit = 5, sta = 0.25, nature = 0.15,
         },
     },
     MAGE = {
         arcane = {
             hit = 12, crit = 9, dpsRanged = 2, mp5 = 1.5, sp = 1,
-            arcane = 0.9, frost = 0.5, int = 0.4, sta = 0.2, spi = 0.1,
+            arcane = 0.9, frost = 0.5, int = 0.85, mana = 0.03,
+            sta = 0.2, spi = 0.1,
         },
         fire = {
             hit = 13, crit = 11, dpsRanged = 2, sp = 1, fire = 0.95,
@@ -240,13 +254,13 @@ ns.WEIGHTS = {
             nature = 0.7, int = 0.4, spi = 0.25, sta = 0.25,
         },
         feral = {
-            hit = 14, crit = 12, agi = 1, str = 0.85, ap = 0.5, fap = 0.5,
-            sta = 0.3, int = 0.1, dps2h = 4, dpsMH = 3.5,
+            hit = 14, crit = 12, agi = 1, str = 1, ap = 0.5, fap = 0.5,
+            sta = 0.3, int = 0.1, dps2h = 5, dpsMH = 5,
         },
         feraltank = {
-            dodge = 12, hit = 5, crit = 4, sta = 1.1, def = 1, agi = 0.9,
+            dodge = 12, hit = 5, crit = 4, sta = 1.1, def = 1, agi = 1.15,
             str = 0.55, ap = 0.35, fap = 0.35, int = 0.05, armor = 0.012,
-            dps2h = 1.2, dpsMH = 1,
+            dps2h = 1.2, dpsMH = 1.2,
         },
         restoration = {
             crit = 4, mp5 = 3, heal = 1, sp = 1, spi = 0.6, int = 0.5, sta = 0.2,
@@ -282,6 +296,7 @@ ns.STAT_GROUPS = {
             { key = "shadow", label = "Shadow damage", short = "Shadow" },
             { key = "holyDmg", label = "Holy damage", short = "Holy" },
             { key = "hit", label = "Hit per 1%", short = "Hit" },
+            { key = "expertise", label = "Expertise per 1% (else hit)", short = "Expertise" },
             { key = "crit", label = "Critical strike per 1%", short = "Crit" },
             { key = "spellHit", label = "Spell hit per 1% (else hit)", short = "Spell hit" },
             { key = "spellCrit", label = "Spell crit per 1% (else crit)", short = "Spell crit" },
@@ -355,6 +370,7 @@ ns.STAT_ALIAS = {
     heal = "heal",
     hit = "hit",
     crit = "crit",
+    expertise = "expertise",
     spellhit = "spellHit",
     spellcrit = "spellCrit",
     haste = "haste",
@@ -431,11 +447,24 @@ function ns.ResolveWeight(weights, key)
     if key == "spellCrit" then
         return weights.crit
     end
+    if key == "expertise" then
+        local physical = (type(weights.str) == "number" and weights.str >= 0.4)
+            or (type(weights.agi) == "number" and weights.agi >= 0.5)
+        if physical then
+            return weights.hit
+        end
+        return 0
+    end
     if key == "health" and weights.sta then
         return weights.sta / 10
     end
     if key == "mana" and weights.int then
         return weights.int / 15
+    end
+    -- Every spec wants some armor. Tanks set their own, higher, value.
+    -- 0.005 keeps a cloth-to-leather jump visible without beating a real stat.
+    if key == "armor" then
+        return 0.005
     end
     return nil
 end
@@ -449,10 +478,31 @@ function ns.UsingCustom(class, spec)
     return byClass and byClass[spec] and true or false
 end
 
+-- Forever-only talent prices. Classic Era keeps the older values.
+local ERA_PATCH = {
+    MAGE = { arcane = { int = 0.35, mana = false } },
+    PALADIN = {
+        retribution = { int = 0.05 },
+        protection = { sp = 0.35, holyDmg = 0.35 },
+    },
+}
+
 function ns.MergedWeights(class, spec)
     class = class or ns.ClassFile()
     spec = spec or (ns.GetSpec and ns.GetSpec())
     local merged = ns.Copy(ns.DefaultWeights(class, spec))
+    if ns.ClientKind and ns.ClientKind() == "era" then
+        local patch = ERA_PATCH[class] and spec and ERA_PATCH[class][spec]
+        if patch then
+            for key, value in pairs(patch) do
+                if value == false then
+                    merged[key] = nil
+                else
+                    merged[key] = value
+                end
+            end
+        end
+    end
     if class and spec and ns.UsingCustom(class, spec) then
         local custom = ns.char.custom[class] and ns.char.custom[class][spec]
         if custom then
@@ -578,10 +628,36 @@ end
 
 local PERCENT = {
     hit = true, crit = true, spellHit = true, spellCrit = true,
-    dodge = true, parry = true, block = true, haste = true,
+    dodge = true, parry = true, block = true, haste = true, expertise = true,
 }
 
-function ns.Score(stats, weights, kind)
+-- Forever launch client 1.60.1.70707 (rechecked 2 Nov 2026) rewrote Classic
+-- Era percentages as points: 10 hit, 14 crit, 12 dodge, 15 parry, and 10
+-- expertise for 1%. Blizzard's notes through 27 Oct did not change this, and
+-- the character sheet formula is still unpublished. The ratio is the same
+-- from low item levels through 78, so it is not the old rating curve.
+-- Classic Era items are already percents.
+local FOREVER_POINTS = {
+    hit = 10, spellHit = 10,
+    crit = 14, spellCrit = 14,
+    dodge = 12, parry = 15, expertise = 10,
+}
+
+function ns.FromRating(key, amount)
+    if type(amount) ~= "number" then
+        return amount
+    end
+    if not ns.ClientKind or ns.ClientKind() ~= "forever" then
+        return amount
+    end
+    local per = FOREVER_POINTS[key]
+    if not per then
+        return amount
+    end
+    return amount / per
+end
+
+function ns.Score(stats, weights, kind, weaponKey)
     local total = 0
     local parts = {}
 
@@ -593,15 +669,29 @@ function ns.Score(stats, weights, kind)
         if type(weight) ~= "number" or weight == 0 then
             return
         end
+        local factor
+        if ns.RacialFactor then
+            factor = ns.RacialFactor(key)
+            if type(factor) == "number" and factor ~= 1 then
+                weight = weight * factor
+                local pct = math.floor(factor * 100 + 0.5) - 100
+                text = text .. " +" .. tostring(pct) .. "% racial"
+            end
+        end
         local contrib = amount * weight
         total = total + contrib
         if math.abs(contrib) >= 0.05 then
-            parts[#parts + 1] = { text = text, contrib = contrib }
+            local part = { text = text, contrib = contrib }
+            if type(factor) == "number" and factor ~= 1 then
+                part.racial = true
+            end
+            parts[#parts + 1] = part
         end
     end
 
     for key, amount in pairs(stats) do
-        if key ~= "dps" and key ~= "speed" and type(amount) == "number" then
+        -- Weapon skill is priced later, against the weapon it actually helps.
+        if key ~= "dps" and key ~= "speed" and type(amount) == "number" and not key:match("^skill_") then
             local label = ns.STAT_LABEL[key] or key
             local shown
             if PERCENT[key] then
@@ -634,6 +724,25 @@ function ns.Score(stats, weights, kind)
         add("dpsRanged", dps, ns.FormatNum(dps or 0) .. " ranged DPS")
         if speed then
             add("speedRanged", speed - 2, ns.FormatNum(speed) .. " speed")
+        end
+    end
+
+    if ns.RacialWeaponBonus then
+        local racial = ns.RacialWeaponBonus(weights, kind, weaponKey, dps)
+        if racial and type(racial.contrib) == "number" and math.abs(racial.contrib) >= 0.05 then
+            total = total + racial.contrib
+            parts[#parts + 1] = { text = racial.text, contrib = racial.contrib, racial = true }
+        end
+    end
+    if weaponKey and ns.WeaponSkillValue then
+        local amount = stats["skill_" .. weaponKey]
+        if type(amount) == "number" and amount > 0 then
+            local contrib = ns.WeaponSkillValue(weights, kind, dps, amount)
+            if type(contrib) == "number" and math.abs(contrib) >= 0.05 then
+                total = total + contrib
+                local label = weaponKey:gsub("1h$", ""):gsub("2h$", "")
+                parts[#parts + 1] = { text = "+" .. ns.FormatNum(amount) .. " " .. label .. " skill", contrib = contrib }
+            end
         end
     end
 

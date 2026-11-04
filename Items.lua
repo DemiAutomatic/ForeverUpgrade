@@ -32,6 +32,7 @@ local API_STAT = {
     ITEM_MOD_PARRY_RATING_SHORT = "parry",
     ITEM_MOD_BLOCK_RATING_SHORT = "block",
     ITEM_MOD_BLOCK_VALUE_SHORT = "blockValue",
+    ITEM_MOD_EXPERTISE_RATING_SHORT = "expertise",
     ITEM_MOD_EXTRA_ARMOR_SHORT = "armor",
     RESISTANCE0_NAME = "armor",
     ITEM_MOD_FIRE_RESISTANCE_SHORT = "resFire",
@@ -76,11 +77,14 @@ local WEAPON_OK = {
 }
 
 local SHIELD_OK = { WARRIOR = true, PALADIN = true, SHAMAN = true }
--- Forever teaches Dual Wield to hunters as well as warriors and rogues.
-local DUAL_WIELD = { WARRIOR = true, ROGUE = true, HUNTER = true }
 
 local function CanDualWield(class)
-    if DUAL_WIELD[class] then
+    if class == "WARRIOR" or class == "ROGUE" then
+        return true
+    end
+    -- Forever teaches Dual Wield to hunters. Classic Era hunters do not have it
+    -- unless a later spell grant says so.
+    if class == "HUNTER" and ns.ClientKind and ns.ClientKind() == "forever" then
         return true
     end
     -- Spell 674 is Dual Wield. Covers a class that learns it later, such as shaman.
@@ -179,6 +183,13 @@ local function IsWeaponClass(classID)
     return classID == 2
 end
 
+function ns.WeaponType(meta)
+    if not meta or not IsWeaponClass(meta.classID) then
+        return nil
+    end
+    return WeaponKey(meta.subclassID)
+end
+
 local function IsArmorClass(classID)
     classID = AsNumber(classID)
     if not classID then
@@ -199,11 +210,19 @@ function ns.LinkID(link)
 end
 
 local pendingIDs = {}
+local failedLoads = {}
 
 function ns.RequestItem(itemID)
-    if itemID and C_Item and C_Item.RequestLoadItemDataByID then
-        pendingIDs[itemID] = true
+    if not itemID then
+        return
+    end
+    pendingIDs[itemID] = true
+    if C_Item and C_Item.RequestLoadItemDataByID then
         pcall(C_Item.RequestLoadItemDataByID, itemID)
+        return
+    end
+    if GetItemInfo then
+        pcall(GetItemInfo, itemID)
     end
 end
 
@@ -275,10 +294,28 @@ function ns.EquippedGUID(slot)
     return guid
 end
 
+local function ItemInfoInstant(link)
+    if C_Item and C_Item.GetItemInfoInstant then
+        return C_Item.GetItemInfoInstant(link)
+    end
+    if GetItemInfoInstant then
+        return GetItemInfoInstant(link)
+    end
+end
+
+local function ItemInfo(link)
+    if C_Item and C_Item.GetItemInfo then
+        return C_Item.GetItemInfo(link)
+    end
+    if GetItemInfo then
+        return GetItemInfo(link)
+    end
+end
+
 function ns.ItemMeta(link)
     local meta = { link = link, id = ns.LinkID(link) }
-    if C_Item and C_Item.GetItemInfoInstant then
-        local _, _, _, equipLoc, _, classID, subclassID = C_Item.GetItemInfoInstant(link)
+    if ItemInfoInstant then
+        local _, _, _, equipLoc, _, classID, subclassID = ItemInfoInstant(link)
         meta.equipLoc = equipLoc
         meta.classID = classID
         meta.subclassID = subclassID
@@ -286,8 +323,8 @@ function ns.ItemMeta(link)
             meta.instant = true
         end
     end
-    if C_Item and C_Item.GetItemInfo then
-        local name, _, _, _, reqLevel, _, _, _, equipLoc, _, _, classID, subclassID = C_Item.GetItemInfo(link)
+    if ItemInfo then
+        local name, _, _, _, reqLevel, _, _, _, equipLoc, _, _, classID, subclassID = ItemInfo(link)
         if type(name) == "string" and not ns.Secret(name) then
             meta.name = name
             if type(reqLevel) == "number" and not ns.Secret(reqLevel) then
@@ -426,6 +463,44 @@ local function AddNumber(dest, key, amount)
     dest[key] = (dest[key] or 0) + amount
 end
 
+-- One line can name several weapons. Edgemaster's is axes, swords, and daggers.
+-- Two-handed phrases are cleared before the short word, and crossbow before bow,
+-- so a two-hand axe is not also counted as a one-hand axe.
+local function SkillKinds(line)
+    local kinds = {}
+    local seen = {}
+    local rest = line
+    local function take(pattern, key)
+        local cleared, n = rest:gsub(pattern, " ")
+        if n > 0 and not seen[key] then
+            seen[key] = true
+            kinds[#kinds + 1] = key
+        end
+        rest = cleared
+    end
+    take("two%-handed swords?", "sword2h")
+    take("two handed swords?", "sword2h")
+    take("two%-handed axes?", "axe2h")
+    take("two handed axes?", "axe2h")
+    take("two%-handed maces?", "mace2h")
+    take("two handed maces?", "mace2h")
+    take("crossbows?", "crossbow")
+    take("swords?", "sword1h")
+    take("axes?", "axe1h")
+    take("maces?", "mace1h")
+    take("daggers?", "dagger")
+    take("fist weapons?", "fist")
+    take("fists?", "fist")
+    take("polearms?", "polearm")
+    take("staves", "staff")
+    take("staffs?", "staff")
+    take("bows?", "bow")
+    take("guns?", "gun")
+    take("thrown", "thrown")
+    take("wands?", "wand")
+    return kinds
+end
+
 local function IsSetLine(lower)
     if lower:match("%(%d+/%d+%)") then
         return true
@@ -470,6 +545,39 @@ local function ParseLine(text, found, weapon, flags)
     end
     if lower:match("^use:") then
         flags.hasUse = true
+        return
+    end
+
+    -- Empty sockets and the socket bonus are not normal stat lines.
+    -- A filled gem already shows up as its own stat. The bonus counts only
+    -- once every socket on the item is filled.
+    if not flags._inSocket and Has(lower, "socket") and not Has(lower, "bonus") then
+        flags.emptySockets = (flags.emptySockets or 0) + 1
+        return
+    end
+    if not flags._inSocket and Has(lower, "socket bonus") then
+        local rest = original:gsub("^.-[Bb]onus:%s*", "")
+        if rest ~= "" and rest ~= original then
+            flags.socketStats = flags.socketStats or {}
+            flags._inSocket = true
+            local lowerRest = rest:lower()
+            local startAt = 1
+            while startAt <= #rest do
+                local at = lowerRest:find(" and ", startAt, true)
+                local piece
+                if at then
+                    piece = rest:sub(startAt, at - 1)
+                    startAt = at + 5
+                else
+                    piece = rest:sub(startAt)
+                    startAt = #rest + 1
+                end
+                if piece ~= "" then
+                    ParseLine(piece, flags.socketStats, {}, flags)
+                end
+            end
+            flags._inSocket = nil
+        end
         return
     end
 
@@ -538,11 +646,22 @@ local function ParseLine(text, found, weapon, flags)
         end
     end
 
+    local function StoreNamed(key, raw)
+        local amount = tonumber(raw)
+        if not amount then
+            return
+        end
+        if ns.FromRating then
+            amount = ns.FromRating(key, amount)
+        end
+        AddNumber(found, key, amount)
+    end
+
     local num, rest = text:match("^%+?(%d+%.?%d*)%s+(.+)$")
     if num and rest then
         local key = statNames[rest:lower()]
         if key then
-            AddNumber(found, key, tonumber(num))
+            StoreNamed(key, num)
             return
         end
     end
@@ -550,13 +669,17 @@ local function ParseLine(text, found, weapon, flags)
     if num and rest and rest ~= "" then
         local key = statNames[rest:lower()]
         if key then
-            AddNumber(found, key, tonumber(num))
+            StoreNamed(key, num)
             return
         end
     end
 
     local pct = tonumber(text:match("(%d+%.?%d*)%%"))
     if pct then
+        if Has(lower, "expertise") or (Has(lower, "dodged") and Has(lower, "parried")) then
+            AddNumber(found, "expertise", pct)
+            return
+        end
         if Has(lower, "critical") or Has(lower, "crit") then
             AddNumber(found, Has(lower, "spell") and "spellCrit" or "crit", pct)
             return
@@ -580,6 +703,46 @@ local function ParseLine(text, found, weapon, flags)
         if Has(lower, "haste") then
             AddNumber(found, "haste", pct)
             return
+        end
+    end
+
+    if not Has(lower, "%%") and (Has(lower, "skill") or Has(lower, "increased")) then
+        local skillN = tonumber(lower:match("(%d+%.?%d*)"))
+        local kinds = SkillKinds(lower)
+        if skillN and skillN > 0 and skillN <= 20 and #kinds > 0 then
+            for i = 1, #kinds do
+                AddNumber(found, "skill_" .. kinds[i], skillN)
+            end
+            return
+        end
+    end
+
+    if not Has(lower, "%%") then
+        local function take(key)
+            local value = tonumber(lower:match("(%d+%.?%d*)"))
+            if not value then
+                return false
+            end
+            if ns.FromRating then
+                value = ns.FromRating(key, value)
+            end
+            AddNumber(found, key, value)
+            return true
+        end
+        if Has(lower, "expertise") or (Has(lower, "dodged") and Has(lower, "parried")) then
+            if take("expertise") then return end
+        end
+        if Has(lower, "critical") or Has(lower, "crit") then
+            if take(Has(lower, "spell") and "spellCrit" or "crit") then return end
+        end
+        if Has(lower, "hit") then
+            if take(Has(lower, "spell") and "spellHit" or "hit") then return end
+        end
+        if Has(lower, "dodge") and not Has(lower, "dodged") then
+            if take("dodge") then return end
+        end
+        if Has(lower, "parry") and not Has(lower, "parried") then
+            if take("parry") then return end
         end
     end
 
@@ -665,8 +828,68 @@ end
 
 local PERCENT_KEY = {
     hit = true, crit = true, spellHit = true, spellCrit = true,
-    dodge = true, parry = true, block = true, haste = true,
+    dodge = true, parry = true, block = true, haste = true, expertise = true,
 }
+
+local function MarkRedRequirement(text, flags)
+    if type(text) ~= "string" then
+        return
+    end
+    local lower = text:lower()
+    local dualWieldLine = Has(lower, "dual wield") or Has(lower, "dual-wield")
+    local classLine = Has(lower, "classes:") or Has(lower, "class:")
+    local metDualWield = dualWieldLine and CanDualWield(ns.ClassFile())
+    if not metDualWield and (classLine or Has(lower, "requires") or Has(lower, "cannot")) then
+        flags.cannot = true
+        flags.reason = classLine and "Your class cannot equip this." or "You do not meet a requirement on this item."
+    end
+end
+
+local function ScanItemLines(link, found, weapon, flags)
+    if not CreateFrame or not UIParent then
+        return false
+    end
+    local tip = ns.scanTip
+    if not tip then
+        tip = CreateFrame("GameTooltip", "ForeverUpgradeScanTooltip", nil, "GameTooltipTemplate")
+        ns.scanTip = tip
+    end
+    tip:SetOwner(UIParent, "ANCHOR_NONE")
+    tip:ClearLines()
+    local ok = pcall(tip.SetHyperlink, tip, link)
+    if not ok then
+        tip:Hide()
+        return false
+    end
+    local name = tip:GetName()
+    local count = tip:NumLines()
+    if type(count) ~= "number" or count <= 0 then
+        tip:Hide()
+        return false
+    end
+    for i = 1, count do
+        local left = _G[name .. "TextLeft" .. i]
+        local right = _G[name .. "TextRight" .. i]
+        local text = left and left.GetText and left:GetText()
+        if type(text) == "string" and text ~= "" then
+            if right and right.GetText then
+                local rightText = right:GetText()
+                if type(rightText) == "string" and rightText ~= "" then
+                    text = text .. " " .. rightText
+                end
+            end
+            if left.GetTextColor then
+                local r, g, b = left:GetTextColor()
+                if type(r) == "number" and r > 0.8 and type(g) == "number" and g < 0.25 and type(b) == "number" and b < 0.25 then
+                    MarkRedRequirement(text, flags)
+                end
+            end
+            ParseLine(text, found, weapon, flags)
+        end
+    end
+    tip:Hide()
+    return true
+end
 
 function ns.ParseItem(link)
     local cached = ns.parseCache[link]
@@ -676,12 +899,16 @@ function ns.ParseItem(link)
     BuildNames()
     local found = {}
     local weapon = {}
-    local flags = { complete = false, cannot = false, hasProc = false, hasSet = false, hasUse = false }
+    local flags = {
+        complete = false, cannot = false, hasProc = false, hasSet = false, hasUse = false,
+        emptySockets = 0, socketStats = {},
+    }
     local hadApi = false
     local hadTip = false
 
-    if C_Item and C_Item.GetItemStats then
-        local ok, raw = pcall(C_Item.GetItemStats, link)
+    local getStats = (C_Item and C_Item.GetItemStats) or GetItemStats
+    if getStats then
+        local ok, raw = pcall(getStats, link)
         if ok and type(raw) == "table" then
             hadApi = true
             for key, value in pairs(raw) do
@@ -690,6 +917,9 @@ function ns.ParseItem(link)
                     if stat == "dps" then
                         weapon.dps = value
                     elseif stat then
+                        if ns.FromRating then
+                            value = ns.FromRating(stat, value)
+                        end
                         AddNumber(found, stat, value)
                     end
                 end
@@ -727,6 +957,11 @@ function ns.ParseItem(link)
         end
     end
 
+    -- Classic Era has no C_TooltipInfo. A hidden tooltip still has the lines.
+    if not hadTip then
+        hadTip = ScanItemLines(link, tipFound, tipWeapon, flags)
+    end
+
     if flags.retrieving then
         hadTip = false
         flags.complete = false
@@ -751,6 +986,26 @@ function ns.ParseItem(link)
     end
     if weapon.speed then
         found.speed = weapon.speed
+    end
+
+    local bonus = flags.socketStats
+    local hasBonus = false
+    if type(bonus) == "table" then
+        for _, amount in pairs(bonus) do
+            if type(amount) == "number" and amount ~= 0 then
+                hasBonus = true
+                break
+            end
+        end
+    end
+    if hasBonus and (flags.emptySockets or 0) > 0 then
+        flags.socketIdle = true
+    elseif hasBonus then
+        for key, amount in pairs(bonus) do
+            if type(amount) == "number" then
+                AddNumber(found, key, amount)
+            end
+        end
     end
 
     if (hadApi or hadTip) and not flags.retrieving then
@@ -943,10 +1198,305 @@ local function WearingTwoHand()
     return false, link
 end
 
-function ns.Evaluate(link, guid)
+local function ItemName(link, meta)
+    if meta and type(meta.name) == "string" and meta.name ~= "" then
+        return meta.name
+    end
+    if type(link) == "string" then
+        local bracket = link:match("%[(.-)%]")
+        if bracket and bracket ~= "" then
+            return bracket
+        end
+    end
+    return "that item"
+end
+
+-- A two-hander cannot share a set with a shield, so it is never a partner.
+local function PartnerRole(meta)
+    if not meta then
+        return nil
+    end
+    local loc = meta.equipLoc
+    if loc == "INVTYPE_WEAPONMAINHAND" then
+        return "mh"
+    end
+    if loc == "INVTYPE_WEAPON" then
+        return "weapon1h"
+    end
+    if loc == "INVTYPE_WEAPONOFFHAND" or loc == "INVTYPE_SHIELD" or loc == "INVTYPE_HOLDABLE" then
+        return "oh"
+    end
+    return nil
+end
+
+local function WantedHand(candidate, hand, class)
+    if candidate.role == hand then
+        return true
+    end
+    if candidate.role ~= "weapon1h" then
+        return false
+    end
+    if hand == "mh" then
+        return true
+    end
+    return CanDualWield(class)
+end
+
+local function BagLimit()
+    local n = NUM_BAG_SLOTS
+    if type(n) == "number" and not ns.Secret(n) and n >= 0 then
+        return n
+    end
+    return 4
+end
+
+local function BagSize(bag)
+    local fn = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+    if type(fn) ~= "function" then
+        return 0
+    end
+    local ok, n = pcall(fn, bag)
+    if not ok or type(n) ~= "number" or ns.Secret(n) or n < 0 then
+        return 0
+    end
+    return n
+end
+
+local function BagGUID(bag, slot)
+    if not ItemLocation or not ItemLocation.CreateFromBagAndSlot or not C_Item or not C_Item.GetItemGUID then
+        return nil
+    end
+    local created, loc = pcall(ItemLocation.CreateFromBagAndSlot, ItemLocation, bag, slot)
+    if not created or not loc or not loc.IsValid then
+        return nil
+    end
+    local checked, isValid = pcall(loc.IsValid, loc)
+    if not checked or ns.Secret(isValid) or isValid ~= true then
+        return nil
+    end
+    local got, guid = pcall(C_Item.GetItemGUID, loc)
+    if not got or type(guid) ~= "string" or ns.Secret(guid) then
+        return nil
+    end
+    return guid
+end
+
+local function BagItem(bag, slot)
+    local link, guid = nil, nil
+    if C_Container and C_Container.GetContainerItemInfo then
+        local ok, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+        if ok and type(info) == "table" then
+            if type(info.hyperlink) == "string" and not ns.Secret(info.hyperlink) then
+                link = info.hyperlink
+            end
+            if type(info.itemGUID) == "string" and not ns.Secret(info.itemGUID) then
+                guid = info.itemGUID
+            end
+        end
+    end
+    if not link then
+        local fn = (C_Container and C_Container.GetContainerItemLink) or GetContainerItemLink
+        if type(fn) == "function" then
+            local ok, found = pcall(fn, bag, slot)
+            if ok and type(found) == "string" and not ns.Secret(found) then
+                link = found
+            end
+        end
+    end
+    if link and not guid then
+        guid = BagGUID(bag, slot)
+    end
+    return link, guid
+end
+
+local function CollectPartners()
+    local list = {}
+    local function add(link, guid, equipped)
+        if type(link) ~= "string" then
+            return
+        end
+        local meta = ns.ItemMeta(link)
+        local role = PartnerRole(meta)
+        if not role or ns.IsFishingPole(meta) then
+            return
+        end
+        list[#list + 1] = {
+            link = link,
+            guid = guid,
+            id = meta.id or ns.LinkID(link),
+            role = role,
+            name = ItemName(link, meta),
+            equipped = equipped and true or false,
+            meta = meta,
+        }
+    end
+    local slots = ns.Slots()
+    add(ns.EquippedLink(slots.MAINHAND), ns.EquippedGUID(slots.MAINHAND), true)
+    add(ns.EquippedLink(slots.OFFHAND), ns.EquippedGUID(slots.OFFHAND), true)
+    local bags = BagLimit()
+    for bag = 0, bags do
+        local n = BagSize(bag)
+        for slot = 1, n do
+            local link, guid = BagItem(bag, slot)
+            add(link, guid, false)
+        end
+    end
+    return list
+end
+
+-- The hovered piece is not its own partner. The same item id pairs only when
+-- a second copy is in bags or equipped, so two of one dagger can fill both hands.
+local function SamePiece(candidate, guid, id, copies)
+    if guid and candidate.guid and candidate.guid == guid then
+        return true
+    end
+    if id and candidate.id == id and (copies[id] or 0) < 2 then
+        return true
+    end
+    return false
+end
+
+local function PartnerScore(candidate, class, weights, kind)
+    if candidate.id and failedLoads[candidate.id] then
+        return nil, false
+    end
+    if not candidate.meta.loaded then
+        ns.RequestItem(candidate.id)
+    end
+    if ns.HardReject(class, candidate.meta) then
+        return nil, false
+    end
+    local item = ns.ParseItem(candidate.link)
+    if not item.flags.complete then
+        ns.RequestItem(candidate.id)
+        return nil, true
+    end
+    if item.flags.cannot then
+        return nil, false
+    end
+    -- Stats can score before the item record arrives. The load event refreshes
+    -- the line, and HardReject then drops anything over level or unusable.
+    local total = ns.Score(item.stats, weights, kind, ns.WeaponType(candidate.meta))
+    return total, false
+end
+
+-- hand is "mh" or "oh". Returns partner, pending.
+local function BestPartner(hand, link, guid, class, weights)
+    local list = CollectPartners()
+    local hoveredId = ns.LinkID(link)
+    local copies = {}
+    for i = 1, #list do
+        local candidate = list[i]
+        if WantedHand(candidate, hand, class) and candidate.id then
+            copies[candidate.id] = (copies[candidate.id] or 0) + 1
+        end
+    end
+    local kind = (hand == "mh") and "mh" or "oh"
+    local best = nil
+    local pending = false
+    for i = 1, #list do
+        local candidate = list[i]
+        if WantedHand(candidate, hand, class) and not SamePiece(candidate, guid, hoveredId, copies) then
+            local total, waiting = PartnerScore(candidate, class, weights, kind)
+            if waiting then
+                pending = true
+            elseif type(total) == "number" then
+                local better = not best or total > best.score
+                local tie = best and total == best.score and candidate.equipped and not best.equipped
+                if better or tie then
+                    best = {
+                        link = candidate.link,
+                        guid = candidate.guid,
+                        name = candidate.name,
+                        score = total,
+                        equipped = candidate.equipped,
+                    }
+                end
+            end
+        end
+    end
+    -- Wait only while every candidate is still loading. A scored partner shows
+    -- immediately; a later load refreshes the line if something better arrives.
+    if pending and (not best or best.score <= 0) then
+        return nil, true
+    end
+    -- An empty hand scores 0. Keep it when nothing in the bags beats that.
+    if not best or best.score <= 0 then
+        return nil, false
+    end
+    return best, false
+end
+
+local function WithPartner(parts, partner)
+    local copy = {}
+    if parts then
+        for i = 1, #parts do
+            copy[i] = parts[i]
+        end
+    end
+    copy[#copy + 1] = {
+        text = partner.name .. " " .. ns.FormatScore(partner.score or 0),
+        contrib = partner.score or 0,
+    }
+    table.sort(copy, function(a, b)
+        return math.abs(a.contrib) > math.abs(b.contrib)
+    end)
+    return copy
+end
+
+local function PartnerNote(partner, handName, replacesTwoHand, equippedSlot)
+    local text = "Paired with " .. partner.name .. " in the " .. handName .. "."
+    if replacesTwoHand then
+        return text .. " Replaces your two-hander."
+    end
+    local worn = ns.EquippedLink(equippedSlot)
+    if worn and not SameItem(partner.link, partner.guid, equippedSlot) then
+        return text .. " Replaces your main hand and off hand."
+    end
+    return text
+end
+
+local function FamilyFor(plan, meta)
+    local mode = plan and plan.mode
+    if mode == "mh" or mode == "weapon1h" or mode == "2h" or mode == "oh" then
+        return "weapon"
+    end
+    local loc = meta and meta.equipLoc
+    if loc == "INVTYPE_ROBE" then
+        return "INVTYPE_CHEST"
+    end
+    return loc
+end
+
+function ns.InvalidateScores()
+    ns.evalStamp = (ns.evalStamp or 0) + 1
+    ns.evalCache = {}
+end
+
+local EvaluateItem
+
+function ns.Evaluate(link, guid, specOverride)
     if not ns.ready or type(link) ~= "string" then
         return { verdict = "ignore" }
     end
+    local stamp = (ns.evalStamp or 0) .. "|" .. tostring(ns.cacheGen or 0)
+    local cacheKey = stamp .. "|" .. link .. "|" .. tostring(guid or "") .. "|" .. tostring(specOverride or "")
+    local cached = ns.evalCache and ns.evalCache[cacheKey]
+    if cached then
+        return cached
+    end
+    local result = EvaluateItem(link, guid, specOverride)
+    ns.scoreSpec = nil
+    if result.verdict ~= "pending" then
+        if not ns.evalCache then
+            ns.evalCache = {}
+        end
+        ns.evalCache[cacheKey] = result
+    end
+    return result
+end
+
+EvaluateItem = function(link, guid, specOverride)
     local meta = ns.ItemMeta(link)
     if (not meta.equipLoc or meta.equipLoc == "") and not meta.instant and not meta.loaded then
         ns.RequestItem(meta.id)
@@ -977,14 +1527,25 @@ function ns.Evaluate(link, guid)
     end
 
     local info = ns.GetSpecInfo()
-    local weights = ns.MergedWeights(class, info.spec)
+    local spec = info.spec
+    if type(specOverride) == "string" and ns.SpecAllowed(class, specOverride) then
+        spec = specOverride
+    end
+    ns.scoreSpec = spec
+    local weights = ns.MergedWeights(class, spec)
     local base = {
-        specLabel = info.label,
-        custom = info.custom,
-        lowConfidence = info.lowConfidence,
+        spec = spec,
+        specLabel = specOverride and (ns.SPEC_LABEL[spec] or spec) or info.label,
+        custom = ns.UsingCustom(class, spec),
+        lowConfidence = specOverride and false or info.lowConfidence,
         hasProc = parsed.flags.hasProc,
         hasSet = parsed.flags.hasSet,
         hasUse = parsed.flags.hasUse,
+        socketIdle = parsed.flags.socketIdle and true or false,
+        family = FamilyFor(plan, meta),
+        equipLoc = meta.equipLoc,
+        name = ItemName(link, meta),
+        link = link,
     }
 
     local function scoreLink(itemLink, kind)
@@ -996,7 +1557,39 @@ function ns.Evaluate(link, guid)
             ns.RequestItem(ns.LinkID(itemLink))
             return nil, true, nil
         end
-        local total, parts = ns.Score(item.stats, weights, kind)
+        local total, parts = ns.Score(item.stats, weights, kind, ns.WeaponType(ns.ItemMeta(itemLink)))
+        if not kind and ns.WeaponSkillValue then
+            local slots = ns.Slots()
+            local hands = {
+                { slot = slots.MAINHAND },
+                { slot = slots.OFFHAND },
+                { slot = slots.RANGED },
+            }
+            for i = 1, #hands do
+                local wornLink = ns.EquippedLink(hands[i].slot)
+                local wornMeta = wornLink and ns.ItemMeta(wornLink)
+                local wornKey = wornMeta and ns.WeaponType(wornMeta)
+                local amount = wornKey and item.stats["skill_" .. wornKey]
+                if type(amount) == "number" and amount > 0 then
+                    local wornKind = "mh"
+                    if hands[i].slot == slots.RANGED then
+                        wornKind = "ranged"
+                    elseif wornMeta.equipLoc == "INVTYPE_2HWEAPON" then
+                        wornKind = "2h"
+                    elseif hands[i].slot == slots.OFFHAND then
+                        wornKind = "oh"
+                    end
+                    local worn = ns.ParseItem(wornLink)
+                    local contrib = ns.WeaponSkillValue(weights, wornKind, worn.stats and worn.stats.dps, amount)
+                    if type(contrib) == "number" and math.abs(contrib) >= 0.05 then
+                        total = (total or 0) + contrib
+                        parts = parts or {}
+                        local label = wornKey:gsub("1h$", ""):gsub("2h$", "")
+                        parts[#parts + 1] = { text = "+" .. ns.FormatNum(amount) .. " " .. label .. " skill", contrib = contrib }
+                    end
+                end
+            end
+        end
         return total, false, parts
     end
 
@@ -1016,15 +1609,20 @@ function ns.Evaluate(link, guid)
         return base
     end
 
-    local function verdictFor(delta)
-        local margin = (ns.char and ns.char.margin) or 0.5
-        if math.abs(delta) <= margin then
-            return "similar"
+    -- Any higher score is an upgrade. A low-level armor jump can be a fraction
+    -- of a point and still be the whole reason to equip the item. An empty
+    -- slot is an upgrade when the piece is not worse than wearing nothing.
+    local function verdictFor(delta, slotEmpty, itemScore, equippedScore)
+        local verdict = "similar"
+        if type(delta) == "number" and delta > 0 then
+            verdict = "upgrade"
+        elseif type(delta) == "number" and delta < 0 then
+            verdict = "downgrade"
         end
-        if delta > 0 then
-            return "upgrade"
+        if slotEmpty and type(delta) == "number" and delta >= 0 then
+            verdict = "upgrade"
         end
-        return "downgrade"
+        return verdict
     end
 
     if plan.mode == "slot" or plan.mode == "multi" then
@@ -1035,37 +1633,86 @@ function ns.Evaluate(link, guid)
         end
         local bestIndex = 1
         local bestScore = nil
+        local bestEmpty = false
         for i = 1, #plan.slots do
             local equipped = ns.EquippedLink(plan.slots[i])
             local equippedScore, equippedPending = scoreLink(equipped, plan.kind)
             if equippedPending then
                 return { verdict = "pending" }
             end
-            if not bestScore or equippedScore < bestScore then
+            local empty = not equipped
+            local lower = not bestScore or equippedScore < bestScore
+            if not lower and bestScore == equippedScore and empty and not bestEmpty then
+                lower = true
+            end
+            if lower then
                 bestScore = equippedScore
                 bestIndex = i
+                bestEmpty = empty
             end
         end
         local delta = score - bestScore
-        return finish(verdictFor(delta), delta, bestScore, plan.names[bestIndex], nil)
+        return finish(verdictFor(delta, bestEmpty, score, bestScore), delta, bestScore, plan.names[bestIndex], nil)
     end
 
     local slots = ns.Slots()
     local twoHand, mainLink = WearingTwoHand()
 
-    if plan.mode == "oh" then
+    -- The equipped side of the line: a two-hander, or main hand plus off hand.
+    local function CurrentWeaponScore()
         if twoHand then
-            return finish("info", nil, nil, "off hand", "Your two-hander uses both hands. This scores " .. ns.FormatScore(score) .. " as an off-hand.")
+            local equippedScore, equippedPending = scoreLink(mainLink, "2h")
+            if equippedPending then
+                return nil, true
+            end
+            return equippedScore or 0, false, "two-hand"
         end
+        local mhScore, mhPending = scoreLink(mainLink, "mh")
+        if mhPending then
+            return nil, true
+        end
+        local ohLink = ns.EquippedLink(slots.OFFHAND)
+        local ohScore, ohPending = scoreLink(ohLink, "oh")
+        if ohPending then
+            return nil, true
+        end
+        local total = (mhScore or 0) + (ohScore or 0)
+        local slotText = ohLink and "main hand + off hand" or "main hand"
+        return total, false, slotText
+    end
+
+    if plan.mode == "oh" then
         if SameItem(link, guid, slots.OFFHAND) then
             return finish("equipped", nil, score, "off hand", nil)
         end
-        local equippedScore, equippedPending = scoreLink(ns.EquippedLink(slots.OFFHAND), "oh")
+        -- A shield pairs with the highest-scoring one-hand main hand you own.
+        local partner, partnerPending = BestPartner("mh", link, guid, class, weights)
+        if partnerPending then
+            return { verdict = "pending" }
+        end
+        if not partner then
+            if twoHand then
+                return finish("info", nil, nil, "off hand", "Your two-hander uses both hands, so this off-hand is not compared.")
+            end
+            local equippedLink = ns.EquippedLink(slots.OFFHAND)
+            local equippedScore, equippedPending = scoreLink(equippedLink, "oh")
+            if equippedPending then
+                return { verdict = "pending" }
+            end
+            local delta = score - equippedScore
+            return finish(verdictFor(delta, not equippedLink, score, equippedScore), delta, equippedScore, "off hand", nil)
+        end
+        local equippedScore, equippedPending, slotText = CurrentWeaponScore()
         if equippedPending then
             return { verdict = "pending" }
         end
-        local delta = score - equippedScore
-        return finish(verdictFor(delta), delta, equippedScore, "off hand", nil)
+        local shown = (score or 0) + partner.score
+        base.score = shown
+        base.parts = WithPartner(parts, partner)
+        local delta = shown - (equippedScore or 0)
+        local note = PartnerNote(partner, "main hand", twoHand, slots.MAINHAND)
+        local offEmpty = not twoHand and not ns.EquippedLink(slots.OFFHAND)
+        return finish(verdictFor(delta, offEmpty, shown, equippedScore or 0), delta, equippedScore or 0, slotText, note)
     end
 
     if plan.mode == "2h" then
@@ -1078,20 +1725,22 @@ function ns.Evaluate(link, guid)
                 return { verdict = "pending" }
             end
             local delta = score - equippedScore
-            return finish(verdictFor(delta), delta, equippedScore, "two-hand", "Replaces your two-hander.")
+            return finish(verdictFor(delta, false, score, equippedScore), delta, equippedScore, "two-hand", "Replaces your two-hander.")
         end
         local mhScore, mhPending = scoreLink(mainLink, "mh")
         if mhPending then
             return { verdict = "pending" }
         end
-        local ohScore, ohPending = scoreLink(ns.EquippedLink(slots.OFFHAND), "oh")
+        local ohLink = ns.EquippedLink(slots.OFFHAND)
+        local ohScore, ohPending = scoreLink(ohLink, "oh")
         if ohPending then
             return { verdict = "pending" }
         end
         local equippedScore = (mhScore or 0) + (ohScore or 0)
         local delta = score - equippedScore
         local note = mainLink and "Replaces main hand and off hand." or nil
-        return finish(verdictFor(delta), delta, equippedScore, mainLink and "main hand + off hand" or "main hand", note)
+        local handsEmpty = not mainLink and not ohLink
+        return finish(verdictFor(delta, handsEmpty, score, equippedScore), delta, equippedScore, mainLink and "main hand + off hand" or "main hand", note)
     end
 
     -- One-hand main-hand, or a one-hand weapon that can go in either hand.
@@ -1115,19 +1764,50 @@ function ns.Evaluate(link, guid)
     end
 
     local function compareMain()
+        local itemScore, itemPending, itemParts = scoreLink(link, "mh")
+        if itemPending then
+            return nil
+        end
+        -- Always add the best off-hand in bags or the off-hand slot, even
+        -- while a main hand is already worn. No partner keeps the old line.
+        local partner, partnerPending = BestPartner("oh", link, guid, class, weights)
+        if partnerPending then
+            return nil
+        end
+        if partner then
+            local equippedScore, equippedPending, slotText = CurrentWeaponScore()
+            if equippedPending then
+                return nil
+            end
+            local shown = itemScore + partner.score
+            local note = PartnerNote(partner, "off hand", twoHand, slots.OFFHAND)
+            return {
+                delta = shown - (equippedScore or 0),
+                equipped = equippedScore or 0,
+                score = shown,
+                parts = WithPartner(itemParts, partner),
+                slotText = slotText,
+                note = note,
+                empty = not twoHand and not mainLink,
+            }
+        end
         local equippedKind = twoHand and "2h" or "mh"
         local equippedScore, equippedPending = scoreLink(mainLink, equippedKind)
         if equippedPending then
             return nil
         end
-        local itemScore, itemPending, itemParts = scoreLink(link, "mh")
-        if itemPending then
-            return nil
-        end
         local delta = itemScore - (equippedScore or 0)
         local note = twoHand and "Replaces your two-hander and leaves the off hand empty." or nil
         local slotText = twoHand and "two-hand" or "main hand"
-        return { delta = delta, equipped = equippedScore or 0, score = itemScore, parts = itemParts, slotText = slotText, note = note }
+        return {
+            delta = delta,
+            equipped = equippedScore or 0,
+            score = itemScore,
+            parts = itemParts,
+            slotText = slotText,
+            note = note,
+            empty = not mainLink,
+        }
     end
 
     local best = compareMain()
@@ -1140,7 +1820,8 @@ function ns.Evaluate(link, guid)
         if ohPending then
             return { verdict = "pending" }
         end
-        local equippedOh, ohEquipPending = scoreLink(ns.EquippedLink(slots.OFFHAND), "oh")
+        local ohLink = ns.EquippedLink(slots.OFFHAND)
+        local equippedOh, ohEquipPending = scoreLink(ohLink, "oh")
         if ohEquipPending then
             return { verdict = "pending" }
         end
@@ -1153,18 +1834,24 @@ function ns.Evaluate(link, guid)
                 parts = ohParts,
                 slotText = "off hand",
                 note = nil,
+                empty = not ohLink,
             }
         end
     end
 
     base.score = best.score
     base.parts = best.parts
-    return finish(verdictFor(best.delta), best.delta, best.equipped, best.slotText, best.note)
+    return finish(verdictFor(best.delta, best.empty, best.score, best.equipped), best.delta, best.equipped, best.slotText, best.note)
 end
 
-ns.On("ITEM_DATA_LOAD_RESULT", function(itemID)
+local function ItemDataLoaded(itemID, success)
     if type(itemID) ~= "number" then
         return
+    end
+    if not ns.Secret(success) and success == false then
+        failedLoads[itemID] = true
+    elseif not ns.Secret(success) and success then
+        failedLoads[itemID] = nil
     end
     local care = pendingIDs[itemID] == true
     pendingIDs[itemID] = nil
@@ -1174,13 +1861,27 @@ ns.On("ITEM_DATA_LOAD_RESULT", function(itemID)
             care = true
         end
     end
-    if care and ns.RefreshTooltip then
-        ns.RefreshTooltip()
+    if care then
+        if ns.InvalidateScores then
+            ns.InvalidateScores()
+        end
+        if ns.RefreshTooltip then
+            ns.RefreshTooltip()
+        end
     end
-end)
+end
 
-ns.On("PLAYER_EQUIPMENT_CHANGED", function()
+ns.On("ITEM_DATA_LOAD_RESULT", ItemDataLoaded)
+ns.On("GET_ITEM_INFO_RECEIVED", ItemDataLoaded)
+
+local function RefreshOpenTooltip()
+    if ns.InvalidateScores then
+        ns.InvalidateScores()
+    end
     if ns.RefreshTooltip then
         ns.RefreshTooltip()
     end
-end)
+end
+
+ns.On("PLAYER_EQUIPMENT_CHANGED", RefreshOpenTooltip)
+ns.On("BAG_UPDATE_DELAYED", RefreshOpenTooltip)

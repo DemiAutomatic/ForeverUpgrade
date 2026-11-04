@@ -433,6 +433,7 @@ end
 
 ns.On("TRAIT_CONFIG_UPDATED", TalentsChanged)
 ns.On("PLAYER_TALENT_UPDATE", TalentsChanged)
+ns.On("CHARACTER_POINTS_CHANGED", TalentsChanged)
 ns.On("PLAYER_LEVEL_UP", function()
     ns.InvalidateSpec()
     ns.Changed()
